@@ -14,6 +14,7 @@ import (
 	"math/rand"
 	// 	"github.com/jedib0t/go-pretty/v6/text"
 	"errors"
+	"github.com/fatih/color"
 	"github.com/xeonx/timeago"
 	"os"
 	"os/exec"
@@ -136,6 +137,7 @@ func renderRepoInfoTable(repoInfos *[]RepoInfo, tableStyle table.Style) string {
 				modifiedMarker = " "
 			}
 
+			// this section might be inducing sigsegv
 			var statusMessage string
 			if ri.statusMessagePointer != nil {
 				statusMessage = *ri.statusMessagePointer
@@ -230,8 +232,24 @@ func update(g *gocui.Gui, sw *StatusbarWidget) {
 
 func renderCuiRepoInfoTable(v *gocui.View, repoInfos *[]RepoInfo) {
 	tableString := renderRepoInfoTablePlain(repoInfos)
-	for _, line := range strings.Split(tableString, "\n") {
-		fmt.Fprintln(v, line)
+	red := color.New(color.FgRed).SprintFunc()
+
+	tableStringSplit := strings.Split(tableString, "\n")
+	for i := 0; i < len(tableStringSplit); i++ {
+		line := tableStringSplit[i]
+
+		if i == 0 {
+			fmt.Fprintln(v, line)
+		} else {
+			repoInfo := (*repoInfos)[i-1]
+			var coloredLine string
+			if repoInfo.isDirty {
+				coloredLine = red(line)
+			} else {
+				coloredLine = line
+			}
+			fmt.Fprintf(v, coloredLine+"\n")
+		}
 	}
 }
 
