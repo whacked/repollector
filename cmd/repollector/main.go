@@ -13,9 +13,11 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"math/rand"
+	"runtime"
 	// 	"github.com/jedib0t/go-pretty/v6/text"
 	"errors"
 	"github.com/fatih/color"
+	"github.com/remeh/sizedwaitgroup"
 	"github.com/xeonx/timeago"
 	"os"
 	"os/exec"
@@ -497,11 +499,12 @@ func populateRepoInfo(repoInfo *RepoInfo) {
 	// look at the doc to get more details
 	// resolving below amounts to
 	// git rev-parse $revision
+	log.Println(fmt.Sprintf("loading %s:%s", repoDir, revision))
 
 	revHash, err := repo.ResolveRevision(plumbing.Revision(revision))
+
 	CheckIfError(err)
 	revCommit, err := repo.CommitObject(*revHash)
-
 	CheckIfError(err)
 
 	headRef, err := repo.Head()
@@ -548,14 +551,21 @@ func main() {
 		FindRepos(dir, &repoDirs, *maxDepth)
 	}
 
+	swg := sizedwaitgroup.New(runtime.NumCPU() / 2)
+
 	repoInfos := []RepoInfo{}
 	for _, repoDir := range repoDirs {
 		repoInfo := RepoInfo{
 			path: repoDir,
 		}
-		populateRepoInfo(&repoInfo)
+		swg.Add()
+		go func() {
+			defer swg.Done()
+			populateRepoInfo(&repoInfo)
+		}()
 		repoInfos = append(repoInfos, repoInfo)
 	}
+	swg.Wait()
 
 	if len(repoInfos) == 0 {
 		fmt.Println("no repos found")

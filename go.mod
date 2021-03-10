@@ -9,5 +9,6 @@ require (
 	github.com/jedib0t/go-pretty/v6 v6.1.0
 	github.com/jroimartin/gocui v0.4.0
 	github.com/nsf/termbox-go v0.0.0-20210114135735-d04385b850e8 // indirect
+	github.com/remeh/sizedwaitgroup v1.0.0 // indirect
 	github.com/xeonx/timeago v1.0.0-rc4
 )
