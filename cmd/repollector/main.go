@@ -10,6 +10,7 @@ import (
 	// "math"
 	"bytes"
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"math/rand"
 	// 	"github.com/jedib0t/go-pretty/v6/text"
@@ -69,9 +70,13 @@ func FindRepos(startDirectory string, out *[]string, maxDepth int) {
 	}
 }
 
-func renderBranchName(ri *RepoInfo) string {
-	branchNameSplit := strings.Split(ri.branchName, "/")
+func getRevisionTail(revisionString string) string {
+	branchNameSplit := strings.Split(revisionString, "/")
 	return branchNameSplit[len(branchNameSplit)-1]
+}
+
+func renderBranchName(ri *RepoInfo) string {
+	return getRevisionTail(ri.branchName)
 }
 
 func renderTime(ri *RepoInfo) string {
@@ -410,7 +415,8 @@ func updateGitRepo(repoInfo *RepoInfo) {
 		fmt.Sprintf(`
 			cd '%s'
 			git pull --rebase --autostash 2>&1
-		`, (*repoInfo).path),
+			git push origin %s 2>&1
+		`, (*repoInfo).path, (*repoInfo).branchName),
 	)
 	// note that because the table renderer splits on newlines from go-pretty,
 	// we must remove all newlines here, otherwise the table renderer will break
@@ -473,7 +479,8 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 }
 
 func populateRepoInfo(repoInfo *RepoInfo) {
-	repo, err := git.PlainOpen((*repoInfo).path)
+	repoDir := (*repoInfo).path
+	repo, err := git.PlainOpen(repoDir)
 	CheckIfError(err)
 
 	ref, err := repo.Head()
@@ -482,21 +489,31 @@ func populateRepoInfo(repoInfo *RepoInfo) {
 	commit, err := repo.CommitObject(ref.Hash())
 	CheckIfError(err)
 
-	/*
-		// this doesn't tell if the repo is AHEAD of the remote
-		// also if it is on a feature branch that is not the same as upstream
-		// ... retrieving the commit object
-		headRef, err := repo.Head()
-		CheckIfError(err)
+	// https://gist.github.com/StevenACoffman/fbfa8be33470c097c068f86bcf4a436b
+	// revision := "origin/master"
+	revision := fmt.Sprintf("origin/%s", getRevisionTail(ref.Name().String()))
 
-		headCommit, err := repo.CommitObject(headRef.Hash())
-		CheckIfError(err)
-			isAncestor, err := headCommit.IsAncestor(commit)
-			CheckIfError(err)
-			fmt.Printf("%s the HEAD an IsAncestor of origin/master? : %v\n",
-				repoDir,
-				isAncestor)
-	*/
+	// Resolve revision into a sha1 commit, only some revisions are resolved
+	// look at the doc to get more details
+	// resolving below amounts to
+	// git rev-parse $revision
+
+	revHash, err := repo.ResolveRevision(plumbing.Revision(revision))
+	CheckIfError(err)
+	revCommit, err := repo.CommitObject(*revHash)
+
+	CheckIfError(err)
+
+	headRef, err := repo.Head()
+	CheckIfError(err)
+	// ... retrieving the commit object
+	headCommit, err := repo.CommitObject(headRef.Hash())
+	CheckIfError(err)
+
+	// is HEAD an IsAncestor of the origin/ branch?
+	isAncestor, err := headCommit.IsAncestor(revCommit)
+
+	CheckIfError(err)
 
 	worktree, _ := repo.Worktree()
 	status, _ := worktree.Status()
@@ -505,7 +522,9 @@ func populateRepoInfo(repoInfo *RepoInfo) {
 	(*repoInfo).time = commit.Author.When
 	(*repoInfo).email = commit.Author.Email
 	(*repoInfo).message = commit.Message
-	(*repoInfo).isDirty = !status.IsClean()
+	// this is semantically incorrect
+	// we want to check to push; IsClean is about whether there are uncommitted local changes
+	(*repoInfo).isDirty = !status.IsClean() || !isAncestor
 }
 
 func main() {
