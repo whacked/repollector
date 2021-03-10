@@ -137,7 +137,6 @@ func renderRepoInfoTable(repoInfos *[]RepoInfo, tableStyle table.Style) string {
 				modifiedMarker = " "
 			}
 
-			// this section might be inducing sigsegv
 			var statusMessage string
 			if ri.statusMessagePointer != nil {
 				statusMessage = *ri.statusMessagePointer
@@ -256,24 +255,36 @@ func renderCuiRepoInfoTable(v *gocui.View, repoInfos *[]RepoInfo) {
 func updateTable(g *gocui.Gui, repoInfos *[]RepoInfo) error {
 	for {
 		g.Update(func(g *gocui.Gui) error {
+			// view retrieval is not guaranteed here!
+			// if you assume it is, you may get SIGSEGV
 			v1, err := g.View("mything")
 			if err != nil {
-				// handle error
+				// log.Panicln(err)
+			} else {
+				v1.Clear()
+				var statusMessage string
+				if (*repoInfos)[0].statusMessagePointer != nil {
+					statusMessage = *(*repoInfos)[0].statusMessagePointer
+				} else {
+					statusMessage = "nothing"
+				}
+				fmt.Fprintln(v1, fmt.Sprintf("%p\n%p\n%s", repoInfos, &(*repoInfos)[0], statusMessage))
 			}
-			v1.Clear()
-			fmt.Fprintln(v1, fmt.Sprintf("%p", repoInfos))
 
 			v, err := g.View("repoList")
 			if err != nil {
-				// handle error
+				// log.Panicln(err)
+			} else {
+				v.Clear()
+				for i := 0; i < len(*repoInfos); i++ {
+					myString := fmt.Sprintf("%d", rand.Intn(100))
+					if myString != "" {
+						// (*repoInfos)[i].statusMessagePointer = &myString
+					}
+				}
+				renderCuiRepoInfoTable(v, repoInfos)
 			}
-			v.Clear()
 
-			for i := 0; i < len(*repoInfos); i++ {
-				myString := fmt.Sprintf("%d", rand.Intn(100))
-				(*repoInfos)[i].statusMessagePointer = &myString
-			}
-			renderCuiRepoInfoTable(v, repoInfos)
 			return nil
 		})
 		time.Sleep(3000 * time.Millisecond)
