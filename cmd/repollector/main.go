@@ -427,6 +427,42 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 	return gocui.ErrQuit
 }
 
+func populateRepoInfo(repoInfo *RepoInfo) {
+	repo, err := git.PlainOpen((*repoInfo).path)
+	CheckIfError(err)
+
+	ref, err := repo.Head()
+	CheckIfError(err)
+
+	commit, err := repo.CommitObject(ref.Hash())
+	CheckIfError(err)
+
+	/*
+		// this doesn't tell if the repo is AHEAD of the remote
+		// also if it is on a feature branch that is not the same as upstream
+		// ... retrieving the commit object
+		headRef, err := repo.Head()
+		CheckIfError(err)
+
+		headCommit, err := repo.CommitObject(headRef.Hash())
+		CheckIfError(err)
+			isAncestor, err := headCommit.IsAncestor(commit)
+			CheckIfError(err)
+			fmt.Printf("%s the HEAD an IsAncestor of origin/master? : %v\n",
+				repoDir,
+				isAncestor)
+	*/
+
+	worktree, _ := repo.Worktree()
+	status, _ := worktree.Status()
+	(*repoInfo).branchName = ref.Name().String()
+	(*repoInfo).latestHash = ref.Hash().String()
+	(*repoInfo).time = commit.Author.When
+	(*repoInfo).email = commit.Author.Email
+	(*repoInfo).message = commit.Message
+	(*repoInfo).isDirty = !status.IsClean()
+}
+
 func main() {
 
 	CWD, err := os.Getwd()
@@ -450,45 +486,11 @@ func main() {
 
 	repoInfos := []RepoInfo{}
 	for _, repoDir := range repoDirs {
-		repo, err := git.PlainOpen(repoDir)
-		CheckIfError(err)
-
-		ref, err := repo.Head()
-		CheckIfError(err)
-
-		commit, err := repo.CommitObject(ref.Hash())
-		CheckIfError(err)
-
-		/*
-			// this doesn't tell if the repo is AHEAD of the remote
-			// also if it is on a feature branch that is not the same as upstream
-			// ... retrieving the commit object
-			headRef, err := repo.Head()
-			CheckIfError(err)
-
-			headCommit, err := repo.CommitObject(headRef.Hash())
-			CheckIfError(err)
-				isAncestor, err := headCommit.IsAncestor(commit)
-				CheckIfError(err)
-				fmt.Printf("%s the HEAD an IsAncestor of origin/master? : %v\n",
-					repoDir,
-					isAncestor)
-		*/
-
-		worktree, _ := repo.Worktree()
-		status, _ := worktree.Status()
-
 		repoInfo := RepoInfo{
-			path:       repoDir,
-			branchName: ref.Name().String(),
-			latestHash: ref.Hash().String(),
-			time:       commit.Author.When,
-			email:      commit.Author.Email,
-			message:    commit.Message,
-			isDirty:    !status.IsClean(),
+			path: repoDir,
 		}
+		populateRepoInfo(&repoInfo)
 		repoInfos = append(repoInfos, repoInfo)
-
 	}
 
 	if len(repoInfos) == 0 {
