@@ -129,26 +129,30 @@ func renderRepoInfoTable(repoInfos *[]RepoInfo, tableStyle table.Style) string {
 		tableOut.AppendHeader(
 			table.Row{"#", "dirty?", "path", "branch", "hash", "time", "email", "message", "status"})
 
-		for i, ri := range *repoInfos {
+		// don't iterate using range *repoInfos
+		// because it seems to do value copy, but we need the pointer
+		// for i, ri := range *repoInfos {
+		for i := 0; i < len(*repoInfos); i++ {
+			ri := &(*repoInfos)[i]
 			var modifiedMarker string
-			if ri.isDirty {
+			if (*ri).isDirty {
 				modifiedMarker = "X"
 			} else {
 				modifiedMarker = " "
 			}
 
 			var statusMessage string
-			if ri.statusMessagePointer != nil {
+			if (*ri).statusMessagePointer != nil {
 				statusMessage = *ri.statusMessagePointer
 			} else {
-				statusMessage = "..."
+				statusMessage = ""
 			}
 			tableOut.AppendRow(
 				table.Row{
-					// i + 1,
-					fmt.Sprintf("%s/%p", i, &ri),
-					modifiedMarker, ri.path, renderBranchName(&ri), ri.latestHash[:7], renderTime(&ri), renderAuthorString(&ri),
-					renderCommitMessage(&ri),
+					i + 1,
+					// fmt.Sprintf("%s/%p", i, &ri),
+					modifiedMarker, (*ri).path, renderBranchName(ri), (*ri).latestHash[:7], renderTime(ri), renderAuthorString(ri),
+					renderCommitMessage(ri),
 					statusMessage,
 				})
 		}
@@ -287,7 +291,7 @@ func updateTable(g *gocui.Gui, repoInfos *[]RepoInfo) error {
 
 			return nil
 		})
-		time.Sleep(3000 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond)
 	}
 }
 
@@ -400,6 +404,33 @@ func showInfoModal(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
+func updateGitRepo(repoInfo *RepoInfo) {
+	commandOutput := runCommand(
+		"bash", "-c",
+		fmt.Sprintf(`
+			cd '%s'
+			git pull --rebase --autostash 2>&1
+		`, (*repoInfo).path),
+	)
+	// note that because the table renderer splits on newlines from go-pretty,
+	// we must remove all newlines here, otherwise the table renderer will break
+	// due to outOfBounds
+	cleanedOutput := strings.Replace(commandOutput, "\n", " ", -1)
+	repoInfo.statusMessagePointer = &cleanedOutput
+	populateRepoInfo(repoInfo)
+}
+
+func makeSyncCommand(repoInfos *[]RepoInfo) func(g *gocui.Gui, v *gocui.View) error {
+	return func(g *gocui.Gui, v *gocui.View) error {
+		for i := 0; i < len(*repoInfos); i++ {
+			if (*repoInfos)[i].isDirty {
+				go updateGitRepo(&(*repoInfos)[i])
+			}
+		}
+		return nil
+	}
+}
+
 func toggleEntry(g *gocui.Gui, v *gocui.View) error {
 	_, noViewErr := g.View("infoModal")
 	if noViewErr != nil {
@@ -428,6 +459,9 @@ func setupKeybindings(repoInfos *[]RepoInfo, g *gocui.Gui) error {
 		return err
 	}
 	if err := g.SetKeybinding("repoList", gocui.KeySpace, gocui.ModNone, toggleEntry); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding("repoList", gocui.KeyEnter, gocui.ModNone, makeSyncCommand(repoInfos)); err != nil {
 		return err
 	}
 
