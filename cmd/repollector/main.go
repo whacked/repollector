@@ -82,7 +82,7 @@ func renderBranchName(ri *RepoInfo) string {
 }
 
 func renderTime(ri *RepoInfo) string {
-	return timeago.English.Format(ri.time)
+	return timeago.NoMax(timeago.English).Format(ri.time)
 }
 
 func renderCommitMessage(ri *RepoInfo) string {
