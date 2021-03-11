@@ -34,7 +34,8 @@ type RepoInfo struct {
 	time                 time.Time
 	email                string
 	message              string
-	isDirty              bool
+	isOutOfSync          bool
+	hasRemote            bool
 	statusMessagePointer *string
 }
 
@@ -95,10 +96,10 @@ func renderTime(ri *RepoInfo) string {
 func renderCommitMessage(ri *RepoInfo) string {
 	mainMessage := strings.Split(ri.message, "\n")[0]
 	maxLen := 40
-	if len(mainMessage) < maxLen-3 {
+	if len(mainMessage) < maxLen {
 		return mainMessage
 	} else {
-		return fmt.Sprintf("%s...", mainMessage[:maxLen])
+		return fmt.Sprintf("%s...", mainMessage[:maxLen-3])
 	}
 }
 
@@ -141,7 +142,7 @@ func renderRepoInfoTable(repoInfos *[]RepoInfo, tableStyle table.Style) string {
 	} else {
 		tableOut := table.NewWriter()
 		tableOut.AppendHeader(
-			table.Row{"#", "dirty?", "path", "branch", "hash", "time", "email", "message", "status"})
+			table.Row{"#", "todo?", "path", "branch", "hash", "time", "email", "message", "status"})
 
 		// don't iterate using range *repoInfos
 		// because it seems to do value copy, but we need the pointer
@@ -149,8 +150,8 @@ func renderRepoInfoTable(repoInfos *[]RepoInfo, tableStyle table.Style) string {
 		for i := 0; i < len(*repoInfos); i++ {
 			ri := &(*repoInfos)[i]
 			var modifiedMarker string
-			if (*ri).isDirty {
-				modifiedMarker = "X"
+			if (*ri).isOutOfSync {
+				modifiedMarker = "SYNC"
 			} else {
 				modifiedMarker = " "
 			}
@@ -260,7 +261,7 @@ func renderCuiRepoInfoTable(v *gocui.View, repoInfos *[]RepoInfo) {
 		} else {
 			repoInfo := (*repoInfos)[i-1]
 			var coloredLine string
-			if repoInfo.isDirty {
+			if repoInfo.isOutOfSync {
 				coloredLine = red(line)
 			} else {
 				coloredLine = line
@@ -438,7 +439,7 @@ func updateGitRepo(repoInfo *RepoInfo) {
 func makeSyncCommand(repoInfos *[]RepoInfo) func(g *gocui.Gui, v *gocui.View) error {
 	return func(g *gocui.Gui, v *gocui.View) error {
 		for i := 0; i < len(*repoInfos); i++ {
-			if (*repoInfos)[i].isDirty {
+			if (*repoInfos)[i].isOutOfSync {
 				go updateGitRepo(&(*repoInfos)[i])
 			}
 		}
@@ -490,51 +491,57 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 func populateRepoInfo(repoInfo *RepoInfo) {
 	repoDir := (*repoInfo).path
 	repo, err := git.PlainOpen(repoDir)
-	CheckIfError(err)
-
-	ref, err := repo.Head()
-	CheckIfError(err)
-
-	commit, err := repo.CommitObject(ref.Hash())
-	CheckIfError(err)
-
-	// https://gist.github.com/StevenACoffman/fbfa8be33470c097c068f86bcf4a436b
-	// revision := "origin/master"
-	revision := fmt.Sprintf("origin/%s", getRevisionTail(ref.Name().String()))
-
-	// Resolve revision into a sha1 commit, only some revisions are resolved
-	// look at the doc to get more details
-	// resolving below amounts to
-	// git rev-parse $revision
-	log.Println(fmt.Sprintf("loading %s:%s", repoDir, revision))
-
-	revHash, err := repo.ResolveRevision(plumbing.Revision(revision))
-
-	CheckIfError(err)
-	revCommit, err := repo.CommitObject(*revHash)
-	CheckIfError(err)
+	CheckIfError(err, "plainOpen")
 
 	headRef, err := repo.Head()
-	CheckIfError(err)
-	// ... retrieving the commit object
+	CheckIfError(err, "Head")
+
 	headCommit, err := repo.CommitObject(headRef.Hash())
-	CheckIfError(err)
+	CheckIfError(err, "CommitObject", "headRef")
 
-	// is HEAD an IsAncestor of the origin/ branch?
-	isAncestor, err := headCommit.IsAncestor(revCommit)
+	var isAncestor bool
+	var hasRemote bool
 
-	CheckIfError(err)
+	remote, err := repo.Remote("origin")
+	if err != nil {
+		hasRemote = false
+	} else if remote == nil {
+		hasRemote = false
+	} else {
+		hasRemote = true
+
+		// https://gist.github.com/StevenACoffman/fbfa8be33470c097c068f86bcf4a436b
+		// revision := "origin/master"
+		revision := fmt.Sprintf("origin/%s", getRevisionTail(headRef.Name().String()))
+
+		// Resolve revision into a sha1 commit, only some revisions are resolved
+		// look at the doc to get more details
+		// resolving below amounts to
+		// git rev-parse $revision
+		log.Println(fmt.Sprintf("loading %s:%s", repoDir, revision))
+
+		revHash, err := repo.ResolveRevision(plumbing.Revision(revision))
+		CheckIfError(err, "ResolveRevision")
+
+		revCommit, err := repo.CommitObject(*revHash)
+		CheckIfError(err, "CommitObject", "revHash")
+
+		// is HEAD an IsAncestor of the origin/ branch?
+		isAncestor, err = headCommit.IsAncestor(revCommit)
+		CheckIfError(err, "IsAncestor")
+	}
 
 	worktree, _ := repo.Worktree()
 	status, _ := worktree.Status()
-	(*repoInfo).branchName = ref.Name().String()
-	(*repoInfo).latestHash = ref.Hash().String()
-	(*repoInfo).time = commit.Author.When
-	(*repoInfo).email = commit.Author.Email
-	(*repoInfo).message = commit.Message
+	(*repoInfo).branchName = headRef.Name().String()
+	(*repoInfo).latestHash = headRef.Hash().String()
+	(*repoInfo).time = headCommit.Author.When
+	(*repoInfo).email = headCommit.Author.Email
+	(*repoInfo).message = headCommit.Message
 	// this is semantically incorrect
 	// we want to check to push; IsClean is about whether there are uncommitted local changes
-	(*repoInfo).isDirty = !status.IsClean() || !isAncestor
+	(*repoInfo).isOutOfSync = !status.IsClean() || !isAncestor
+	(*repoInfo).hasRemote = hasRemote
 }
 
 func main() {
@@ -569,8 +576,11 @@ func main() {
 		go func() {
 			defer swg.Done()
 			populateRepoInfo(&repoInfo)
+
+			if repoInfo.hasRemote {
+				repoInfos = append(repoInfos, repoInfo)
+			}
 		}()
-		repoInfos = append(repoInfos, repoInfo)
 	}
 	swg.Wait()
 
