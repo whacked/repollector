@@ -552,6 +552,7 @@ func main() {
 	}
 
 	maxDepth := flag.Int("maxdepth", 2, "max search depth in each provided directory")
+	justPrintTable := flag.Bool("table", false, "just print the status table")
 	flag.Parse()
 
 	// parse the remaining args, each one is a target dir
@@ -565,7 +566,7 @@ func main() {
 		FindRepos(dir, &repoDirs, *maxDepth)
 	}
 
-	swg := sizedwaitgroup.New(runtime.NumCPU() / 2)
+	swg := sizedwaitgroup.New(runtime.NumCPU())
 
 	repoInfos := []RepoInfo{}
 	for _, repoDir := range repoDirs {
@@ -586,11 +587,13 @@ func main() {
 
 	if len(repoInfos) == 0 {
 		fmt.Println("no repos found")
-	} else if false {
-		fmt.Println(renderRepoInfoTableColored(&repoInfos))
 	} else {
 		fmt.Printf("found %d repos...\n", len(repoInfos))
+	}
 
+	if *justPrintTable {
+		fmt.Println(renderRepoInfoTableColored(&repoInfos))
+	} else {
 		g, err := gocui.NewGui(gocui.OutputNormal)
 		if err != nil {
 			log.Panicln(err)
