@@ -471,21 +471,27 @@ func toggleEntry(g *gocui.Gui, v *gocui.View) error {
 }
 
 func setupKeybindings(repoInfos *[]RepoInfo, g *gocui.Gui) error {
-	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
-		return err
+	exitKeys := []interface{}{gocui.KeyCtrlC, gocui.KeyCtrlQ, 'q'}
+	for _, exitKey := range exitKeys {
+		if err := g.SetKeybinding("repoList", exitKey, gocui.ModNone, quit); err != nil {
+			return err
+		}
 	}
-	if err := g.SetKeybinding("repoList", gocui.KeyCtrlN, gocui.ModNone, makeCursorReader(repoInfos, 1)); err != nil {
-		return err
+
+	downKeys := []interface{}{gocui.KeyCtrlN, gocui.KeyArrowDown, 'j'}
+	for _, downKey := range downKeys {
+		if err := g.SetKeybinding("repoList", downKey, gocui.ModNone, makeCursorReader(repoInfos, 1)); err != nil {
+			return err
+		}
 	}
-	if err := g.SetKeybinding("repoList", gocui.KeyCtrlP, gocui.ModNone, makeCursorReader(repoInfos, -1)); err != nil {
-		return err
+
+	upKeys := []interface{}{gocui.KeyCtrlP, gocui.KeyArrowUp, 'k'}
+	for _, upKey := range upKeys {
+		if err := g.SetKeybinding("repoList", upKey, gocui.ModNone, makeCursorReader(repoInfos, -1)); err != nil {
+			return err
+		}
 	}
-	if err := g.SetKeybinding("repoList", gocui.KeyArrowDown, gocui.ModNone, makeCursorReader(repoInfos, 1)); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding("repoList", gocui.KeyArrowUp, gocui.ModNone, makeCursorReader(repoInfos, -1)); err != nil {
-		return err
-	}
+
 	if err := g.SetKeybinding("repoList", gocui.KeySpace, gocui.ModNone, toggleEntry); err != nil {
 		return err
 	}
