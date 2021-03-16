@@ -33,15 +33,17 @@ type DirInfo struct {
 }
 
 type RepoInfo struct {
-	path                 string
-	branchName           string
-	latestHash           string
-	time                 time.Time
-	email                string
-	message              string
-	isOutOfSync          bool
-	hasRemote            bool
 	statusMessagePointer *string
+	path        string
+	displayPath string
+	branchName  string
+	latestHash  string
+	time        time.Time
+	email       string
+	message     string
+	isOutOfSync bool
+	isPushable  bool
+	hasRemote   bool
 }
 
 // https://github.com/go-git/go-git/blob/_examples/common.go#L19
@@ -63,7 +65,7 @@ func CheckIfError(err error, labels ...string) {
 
 func FindRepos(startDirectory string, out *[]string, maxDepth int) {
 
-	pattern := regexp.MustCompile("^\\.(?P<type>git)$")
+	gitRepoPattern := regexp.MustCompile("^\\.(?P<type>git)$")
 
 	files, err := ioutil.ReadDir(startDirectory)
 	if err != nil {
@@ -74,7 +76,7 @@ func FindRepos(startDirectory string, out *[]string, maxDepth int) {
 	for _, fileInfo := range files {
 		fullPath := path.Join(startDirectory, fileInfo.Name())
 
-		maybeMatches := pattern.FindStringSubmatch(fileInfo.Name())
+		maybeMatches := gitRepoPattern.FindStringSubmatch(fileInfo.Name())
 		if len(maybeMatches) > 1 {
 			fmt.Printf("found a [%s] repo: %s\n", maybeMatches[1], fullPath)
 			*out = append(*out, startDirectory)
@@ -147,7 +149,7 @@ func renderRepoInfoTable(repoInfos *[]RepoInfo, tableStyle table.Style) string {
 	} else {
 		tableOut := table.NewWriter()
 		tableOut.AppendHeader(
-			table.Row{"#", "todo?", "path", "branch", "hash", "time", "email", "message", "status"})
+			table.Row{"#", "todo?", "repo", "branch", "hash", "time", "email", "message", "status"})
 
 		// don't iterate using range *repoInfos
 		// because it seems to do value copy, but we need the pointer
@@ -171,7 +173,12 @@ func renderRepoInfoTable(repoInfos *[]RepoInfo, tableStyle table.Style) string {
 				table.Row{
 					i + 1,
 					// fmt.Sprintf("%s/%p", i, &ri),
-					modifiedMarker, (*ri).path, renderBranchName(ri), (*ri).latestHash[:7], renderTime(ri), renderAuthorString(ri),
+					modifiedMarker,
+					(*ri).displayPath,
+					renderBranchName(ri),
+					(*ri).latestHash[:7],
+					renderTime(ri),
+					renderAuthorString(ri),
 					renderCommitMessage(ri),
 					statusMessage,
 				})
@@ -493,6 +500,10 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 	return gocui.ErrQuit
 }
 
+func getIsPushable(repositoryUrl string) bool {
+	return strings.HasPrefix(repositoryUrl, "git@")
+}
+
 func populateRepoInfo(repoInfo *RepoInfo) {
 	repoDir := (*repoInfo).path
 	repo, err := git.PlainOpen(repoDir)
@@ -506,14 +517,18 @@ func populateRepoInfo(repoInfo *RepoInfo) {
 
 	var isAncestor bool
 	var hasRemote bool
+	var isPushable bool
 
 	remote, err := repo.Remote("origin")
 	if err != nil {
 		hasRemote = false
+		isPushable = false
 	} else if remote == nil {
 		hasRemote = false
+		isPushable = false
 	} else {
 		hasRemote = true
+		isPushable = getIsPushable(remote.Config().URLs[0])
 
 		// https://gist.github.com/StevenACoffman/fbfa8be33470c097c068f86bcf4a436b
 		// revision := "origin/master"
@@ -536,16 +551,18 @@ func populateRepoInfo(repoInfo *RepoInfo) {
 		CheckIfError(err, "IsAncestor")
 	}
 
-	worktree, _ := repo.Worktree()
-	status, _ := worktree.Status()
+	// worktree, _ := repo.Worktree()
+	// status, _ := worktree.Status()
 	(*repoInfo).branchName = headRef.Name().String()
 	(*repoInfo).latestHash = headRef.Hash().String()
 	(*repoInfo).time = headCommit.Author.When
 	(*repoInfo).email = headCommit.Author.Email
 	(*repoInfo).message = headCommit.Message
+	(*repoInfo).isPushable = isPushable
 	// this is semantically incorrect
 	// we want to check to push; IsClean is about whether there are uncommitted local changes
-	(*repoInfo).isOutOfSync = !status.IsClean() || !isAncestor
+	// (*repoInfo).isOutOfSync = !status.IsClean() || !isAncestor
+	(*repoInfo).isOutOfSync = !isAncestor
 	(*repoInfo).hasRemote = hasRemote
 }
 
@@ -592,7 +609,7 @@ func main() {
 			defer swg.Done()
 			populateRepoInfo(&repoInfo)
 
-			if repoInfo.hasRemote {
+			if repoInfo.isPushable {
 				repoInfos = append(repoInfos, repoInfo)
 			}
 		}()
