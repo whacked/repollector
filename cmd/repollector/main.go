@@ -15,6 +15,7 @@ import (
 	"math/rand"
 	"runtime"
 	// 	"github.com/jedib0t/go-pretty/v6/text"
+	"bufio"
 	"errors"
 	"github.com/fatih/color"
 	"github.com/remeh/sizedwaitgroup"
@@ -24,8 +25,14 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
+
+type CommandOutputBuffer struct {
+	stdout *string
+	stderr *string
+}
 
 type DirInfo struct {
 	path    string
@@ -33,17 +40,17 @@ type DirInfo struct {
 }
 
 type RepoInfo struct {
-	statusMessagePointer *string
-	path        string
-	displayPath string
-	branchName  string
-	latestHash  string
-	time        time.Time
-	email       string
-	message     string
-	isOutOfSync bool
-	isPushable  bool
-	hasRemote   bool
+	path                string
+	displayPath         string
+	branchName          string
+	latestHash          string
+	time                time.Time
+	email               string
+	message             string
+	isOutOfSync         bool
+	isPushable          bool
+	hasRemote           bool
+	commandOutputBuffer *CommandOutputBuffer
 }
 
 // https://github.com/go-git/go-git/blob/_examples/common.go#L19
@@ -140,6 +147,8 @@ func renderRepoInfo(ri *RepoInfo) string {
 }
 
 func renderRepoInfoTable(repoInfos *[]RepoInfo, tableStyle table.Style) string {
+	magenta := color.New(color.FgMagenta).SprintFunc()
+	blue := color.New(color.FgBlue).SprintFunc()
 	if false {
 		buffer := new(bytes.Buffer)
 		for _, ri := range *repoInfos {
@@ -163,11 +172,15 @@ func renderRepoInfoTable(repoInfos *[]RepoInfo, tableStyle table.Style) string {
 				modifiedMarker = " "
 			}
 
-			var statusMessage string
-			if (*ri).statusMessagePointer != nil {
-				statusMessage = *ri.statusMessagePointer
-			} else {
-				statusMessage = ""
+			statusMessage := ""
+			if (*ri).commandOutputBuffer != nil {
+				cob := *ri.commandOutputBuffer
+				if cob.stdout != nil {
+					statusMessage = blue(fmt.Sprintf(*(cob.stdout)))
+				}
+				if cob.stderr != nil {
+					statusMessage = magenta(fmt.Sprintf(*(cob.stderr)))
+				}
 			}
 			tableOut.AppendRow(
 				table.Row{
@@ -240,6 +253,50 @@ func runCommand(args ...string) string {
 		log.Printf("command failed")
 	}
 	return buf.String()
+}
+
+func streamCommandToBufferObject(
+	cmd *exec.Cmd,
+	stdoutScanner *bufio.Scanner,
+	stderrScanner *bufio.Scanner,
+	commandOutputBuffer *CommandOutputBuffer,
+) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for stdoutScanner.Scan() {
+			currentOutput := stdoutScanner.Text()
+			(*commandOutputBuffer).stderr = nil
+			(*commandOutputBuffer).stdout = &currentOutput
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for stderrScanner.Scan() {
+			currentOutput := stderrScanner.Text()
+			(*commandOutputBuffer).stdout = nil
+			(*commandOutputBuffer).stderr = &currentOutput
+		}
+	}()
+	cmd.Start()
+	// this blocks the call until all output is gathered
+	// wg.Wait()
+}
+
+func streamCommandOutput(wg *sync.WaitGroup, args ...string) *CommandOutputBuffer {
+	defer wg.Done()
+	cmd := exec.Command(args[0], args[1:]...)
+
+	stdoutReader, _ := cmd.StdoutPipe()
+	stderrReader, _ := cmd.StderrPipe()
+
+	commandOutputBuffer := CommandOutputBuffer{}
+	stdoutScanner := bufio.NewScanner(stdoutReader)
+	stderrScanner := bufio.NewScanner(stderrReader)
+	streamCommandToBufferObject(cmd, stdoutScanner, stderrScanner, &commandOutputBuffer)
+	return &commandOutputBuffer
 }
 
 func update(g *gocui.Gui, sw *StatusbarWidget) {
@@ -431,30 +488,38 @@ func showInfoModal(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
-func updateGitRepo(repoInfo *RepoInfo) {
-	commandOutput := runCommand(
-		"bash", "-c",
-		fmt.Sprintf(`
-			cd '%s'
-			git pull --rebase --autostash 2>&1
-			git push origin %s 2>&1
-		`, (*repoInfo).path, (*repoInfo).branchName),
-	)
-	// note that because the table renderer splits on newlines from go-pretty,
-	// we must remove all newlines here, otherwise the table renderer will break
-	// due to outOfBounds
-	cleanedOutput := strings.Replace(commandOutput, "\n", " ", -1)
-	repoInfo.statusMessagePointer = &cleanedOutput
-	populateRepoInfo(repoInfo)
+func updateGitRepo(wg *sync.WaitGroup, repoInfo *RepoInfo) {
+	bashCommand := fmt.Sprintf(`
+		cd '%s'
+		git pull --rebase --autostash 2>&1
+		git push origin %s 2>&1
+	`, (*repoInfo).path, (*repoInfo).branchName)
+
+	/*
+		// synchronous method
+			commandOutput := runCommand("bash", "-c", bashCommand)
+			// note that because the table renderer splits on newlines from go-pretty,
+			// we must remove all newlines here, otherwise the table renderer will break
+			// due to outOfBounds
+			cleanedOutput := strings.Replace(commandOutput, "\n", " ", -1)
+			repoInfo.statusMessagePointer = &cleanedOutput
+			populateRepoInfo(repoInfo)
+	*/
+
+	(*repoInfo).commandOutputBuffer = streamCommandOutput(wg, "bash", "-c", bashCommand)
 }
 
 func makeSyncCommand(repoInfos *[]RepoInfo) func(g *gocui.Gui, v *gocui.View) error {
 	return func(g *gocui.Gui, v *gocui.View) error {
+		var wg sync.WaitGroup
 		for i := 0; i < len(*repoInfos); i++ {
 			if (*repoInfos)[i].isOutOfSync {
-				go updateGitRepo(&(*repoInfos)[i])
+				wg.Add(1)
+				go updateGitRepo(&wg, &(*repoInfos)[i])
 			}
 		}
+		// blocks return until all outputs retrieved
+		// wg.Wait()
 		return nil
 	}
 }
