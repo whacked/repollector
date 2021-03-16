@@ -27,6 +27,11 @@ import (
 	"time"
 )
 
+type DirInfo struct {
+	path    string
+	relPath string
+}
+
 type RepoInfo struct {
 	path                 string
 	branchName           string
@@ -556,22 +561,31 @@ func main() {
 	flag.Parse()
 
 	// parse the remaining args, each one is a target dir
-	dirs := flag.Args()
-	if len(dirs) == 0 {
-		dirs = append(dirs, CWD)
+	searchDirs := flag.Args()
+	if len(searchDirs) == 0 {
+		searchDirs = append(searchDirs, CWD)
 	}
 
-	repoDirs := []string{}
-	for _, dir := range dirs {
-		FindRepos(dir, &repoDirs, *maxDepth)
+	dirInfos := []DirInfo{}
+	for _, searchDir := range searchDirs {
+		repoDirs := []string{}
+		FindRepos(searchDir, &repoDirs, *maxDepth)
+		for _, repoDir := range repoDirs {
+			relPath := repoDir[len(searchDir)+1:]
+			dirInfos = append(dirInfos, DirInfo{
+				path:    repoDir,
+				relPath: relPath,
+			})
+		}
 	}
 
 	swg := sizedwaitgroup.New(runtime.NumCPU())
 
 	repoInfos := []RepoInfo{}
-	for _, repoDir := range repoDirs {
+	for _, dirInfo := range dirInfos {
 		repoInfo := RepoInfo{
-			path: repoDir,
+			path:        dirInfo.path,
+			displayPath: dirInfo.relPath,
 		}
 		swg.Add()
 		go func() {
@@ -589,31 +603,31 @@ func main() {
 		fmt.Println("no repos found")
 	} else {
 		fmt.Printf("found %d repos...\n", len(repoInfos))
-	}
 
-	if *justPrintTable {
-		fmt.Println(renderRepoInfoTableColored(&repoInfos))
-	} else {
-		g, err := gocui.NewGui(gocui.OutputNormal)
-		if err != nil {
-			log.Panicln(err)
-		}
-		defer g.Close()
+		if *justPrintTable {
+			fmt.Println(renderRepoInfoTableColored(&repoInfos))
+		} else {
+			g, err := gocui.NewGui(gocui.OutputNormal)
+			if err != nil {
+				log.Panicln(err)
+			}
+			defer g.Close()
 
-		g.Cursor = true
-		g.SetManagerFunc(makeLayout(&repoInfos))
+			g.Cursor = true
+			g.SetManagerFunc(makeLayout(&repoInfos))
 
-		if err := setupKeybindings(&repoInfos, g); err != nil {
-			log.Panicln(err)
-		}
+			if err := setupKeybindings(&repoInfos, g); err != nil {
+				log.Panicln(err)
+			}
 
-		status := NewStatusbarWidget("status", 20, 15, 50)
-		go update(g, status)
+			// status := NewStatusbarWidget("status", 20, 15, 50)
+			// go update(g, status)
 
-		go updateTable(g, &repoInfos)
+			go updateTable(g, &repoInfos)
 
-		if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
-			log.Panicln(err)
+			if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
+				log.Panicln(err)
+			}
 		}
 	}
 }
